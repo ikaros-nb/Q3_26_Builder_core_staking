@@ -15,11 +15,7 @@ declare_id!("G8LCc1EkmWZApyYgdYbiUGY6KCETY4q4KwAYo31y7822");
 pub mod q3_26_core_staking {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        crate::instructions::initialize::handle_initialize(ctx)
-    }
-
-    pub fn increment(ctx: Context<Increment>) -> Result<()> {
-        crate::instructions::increment::handle_increment(ctx)
+    pub fn initialize(ctx: Context<Initialize>, rewards_bps: u16, freeze_period: u16) -> Result<()> {
+        ctx.accounts.handle(rewards_bps, freeze_period, &ctx.bumps)
     }
 }
