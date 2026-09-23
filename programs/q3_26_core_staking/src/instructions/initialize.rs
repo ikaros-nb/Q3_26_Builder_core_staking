@@ -45,7 +45,7 @@ pub struct Initialize<'info> {
 }
 
 impl<'info> Initialize<'info> {
-    pub fn handle(
+    pub fn initialize(
         &mut self,
         rewards_bps: u16,
         freeze_period: u16,
