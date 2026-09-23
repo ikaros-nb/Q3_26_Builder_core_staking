@@ -1,0 +1,46 @@
+[package]
+name = "q3_26_core_staking"
+version = "0.1.0"
+description = "Created with Anchor"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "q3_26_core_staking"
+
+# solana-cli 2.3.0 ships platform-tools v1.48 (Cargo 1.84), too old for
+# edition-2024 crates in the dependency tree. Force newer tools for cargo build-sbf.
+[package.metadata.solana]
+tools-version = "v1.53"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+no-idl = []
+idl-build = [
+    "anchor-lang/idl-build",
+    "anchor-spl/idl-build"
+]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+
+[dependencies]
+anchor-lang = "0.32.2"
+anchor-spl = "0.32.2"
+mpl-core = { version = "0.12.1", default-features = false, features = ["anchor-0-32"] }
+
+[dev-dependencies]
+litesvm = "0.10.0"
+solana-message = "3.0.1"
+solana-transaction = "3.0.2"
+solana-signer = "3.0.0"
+solana-keypair = "3.0.1"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
