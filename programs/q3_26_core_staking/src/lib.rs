@@ -22,4 +22,8 @@ pub mod q3_26_core_staking {
     pub fn create_collection(ctx: Context<CreateCollection>, name: String, uri: String) -> Result<()> {
         ctx.accounts.create_collection(name, uri, &ctx.bumps)
     }
+
+    pub fn mint_asset(ctx: Context<MintAsset>, name: String, uri: String) -> Result<()> {
+        ctx.accounts.mint_asset(name, uri, &ctx.bumps)
+    }
 }
