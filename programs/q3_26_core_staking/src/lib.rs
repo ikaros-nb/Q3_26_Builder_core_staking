@@ -31,6 +31,10 @@ pub mod q3_26_core_staking {
         ctx.accounts.stake(&ctx.bumps)
     }
 
+    pub fn unstake(ctx: Context<Unstake>) -> Result<()> {
+        ctx.accounts.unstake(&ctx.bumps)
+    }
+
     pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
         ctx.accounts.claim_rewards(&ctx.bumps)
     }
