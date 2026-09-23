@@ -60,76 +60,61 @@ pub struct ClaimRewards<'info> {
 
 impl<'info> ClaimRewards<'info> {
     pub fn claim_rewards(&self, bumps: &ClaimRewardsBumps) -> Result<()> {
-        // We start by fetching the existing attributes (if they exist)
-        let attributes_fetched: Option<Attributes> = fetch_plugin::<BaseAssetV1, Attributes>(
+        // We start by fetching the existing attributes; if the plugin is missing the asset is not staked
+        let attributes: Attributes = fetch_plugin::<BaseAssetV1, Attributes>(
             &self.asset.to_account_info(),
             PluginType::Attributes,
         )
-        .ok()
-        .map(|(_, attrs, _)| attrs);
-
-        // If the attributes don't exist, we return an error
-        require!(
-            attributes_fetched.is_some(),
-            CoreStakingError::AssetNotStaked
-        );
+        .map(|(_, attrs, _)| attrs)
+        .map_err(|_| CoreStakingError::AssetNotStaked)?;
 
         // Prepare the Attributes list to update based on the existing attributes
-        let attributes = attributes_fetched.unwrap();
         let mut attributes_list: Vec<Attribute> =
             Vec::with_capacity(attributes.attribute_list.len());
 
         let current_timestamp = Clock::get()?.unix_timestamp;
-        let mut staked_timestamp: i64 = 0;
-        let mut last_claimed_timestamp: i64 = 0;
-        let mut last_claimed_found = false;
+        let mut staked_found = false;
+        let mut staked_timestamp: Option<i64> = None;
 
+        // "staked_at" is the single source of truth for unpaid rewards: stake sets it,
+        // claim_rewards advances it by the days it pays, unstake pays from it and resets it.
         for attribute in &attributes.attribute_list {
             if attribute.key == "staked" {
                 require!(attribute.value == "true", CoreStakingError::AssetNotStaked);
+                staked_found = true;
             } else if attribute.key == "staked_at" {
-                staked_timestamp = attribute
-                    .value
-                    .parse::<i64>()
-                    .map_err(|_| CoreStakingError::InvalidTimestamp)?;
-            } else if attribute.key == "last_claimed_at" {
-                last_claimed_timestamp = attribute
-                    .value
-                    .parse::<i64>()
-                    .map_err(|_| CoreStakingError::InvalidTimestamp)?;
-                last_claimed_found = true;
+                staked_timestamp = Some(
+                    attribute
+                        .value
+                        .parse::<i64>()
+                        .map_err(|_| CoreStakingError::InvalidTimestamp)?,
+                );
             } else {
                 attributes_list.push(attribute.clone());
             }
         }
 
-        if !last_claimed_found {
-            last_claimed_timestamp = staked_timestamp;
-        }
+        // Both staking attributes must be present, otherwise the asset is not staked by this program
+        require!(staked_found, CoreStakingError::AssetNotStaked);
+        let staked_timestamp = staked_timestamp.ok_or(CoreStakingError::AssetNotStaked)?;
 
-        attributes_list.push(Attribute {
-            key: "staked".to_string(),
-            value: "true".to_string(),
-        });
-        attributes_list.push(Attribute {
-            key: "staked_at".to_string(),
-            value: staked_timestamp.to_string(),
-        });
-
-        // Calculate elapsed time (in seconds) since the last claim/stake
+        // Calculate elapsed time (in seconds) since the last checkpoint (stake or previous claim)
         let elapsed_time = current_timestamp
-            .checked_sub(last_claimed_timestamp)
+            .checked_sub(staked_timestamp)
             .ok_or(CoreStakingError::InvalidTimestamp)?;
-        // Elapsed time in days
+        // Elapsed time in whole days
         let elapsed_days = elapsed_time
             .checked_div(SECONDS_PER_DAY)
             .ok_or(CoreStakingError::InvalidTimestamp)?;
 
-        // We must have at least one day elapsed to claim
+        // We must have at least one full day elapsed to claim
         require!(elapsed_days > 0, CoreStakingError::NoRewardsToClaim);
 
-        // last_claimed_at is set to the last claimed timestamp + elapsed days in seconds to preserve fractional seconds
-        let new_last_claimed = last_claimed_timestamp
+        // Advance the checkpoint by the exact number of days paid, so the fractional day
+        // is carried over to the next claim/unstake instead of being lost.
+        // Note: unstake measures the freeze period from this same attribute, so a claim
+        // restarts the freeze period.
+        let new_staked_timestamp = staked_timestamp
             .checked_add(
                 elapsed_days
                     .checked_mul(SECONDS_PER_DAY)
@@ -138,8 +123,12 @@ impl<'info> ClaimRewards<'info> {
             .ok_or(CoreStakingError::InvalidTimestamp)?;
 
         attributes_list.push(Attribute {
-            key: "last_claimed_at".to_string(),
-            value: new_last_claimed.to_string(),
+            key: "staked".to_string(),
+            value: "true".to_string(),
+        });
+        attributes_list.push(Attribute {
+            key: "staked_at".to_string(),
+            value: new_staked_timestamp.to_string(),
         });
 
         // Prepare signing seeds for the update authority
