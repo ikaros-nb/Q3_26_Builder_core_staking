@@ -1,19 +1,15 @@
+use crate::{constants::*, error::CoreStakingError, state::Config};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{mint_to_checked, Mint, MintToChecked, TokenAccount, TokenInterface}
+    token_interface::{mint_to_checked, Mint, MintToChecked, TokenAccount, TokenInterface},
 };
 use mpl_core::{
-    ID as MPL_CORE_ID,
     accounts::{BaseAssetV1, BaseCollectionV1},
-    instructions::UpdatePluginV1CpiBuilder,
-    types::{UpdateAuthority, Attribute, Attributes, Plugin, PluginType, FreezeDelegate},
     fetch_plugin,
-};
-use crate::{
-    constants::*,
-    error::CoreStakingError,
-    state::Config,
+    instructions::UpdatePluginV1CpiBuilder,
+    types::{Attribute, Attributes, FreezeDelegate, Plugin, PluginType, UpdateAuthority},
+    ID as MPL_CORE_ID,
 };
 
 #[derive(Accounts)]
@@ -66,60 +62,59 @@ impl<'info> Unstake<'info> {
     pub fn unstake(&self, bumps: &UnstakeBumps) -> Result<()> {
         // We start by fetching the existing attributes (if they exist)
         let attributes_fetched: Option<Attributes> = fetch_plugin::<BaseAssetV1, Attributes>(
-            &self.asset.to_account_info(), 
+            &self.asset.to_account_info(),
             PluginType::Attributes,
         )
         .ok()
-        .map(|(_,attrs,_)| attrs);
-        
+        .map(|(_, attrs, _)| attrs);
+
         // If the attributes don't exist, we return an error
-        require!(attributes_fetched.is_some(), CoreStakingError::AssetNotStaked);
+        require!(
+            attributes_fetched.is_some(),
+            CoreStakingError::AssetNotStaked
+        );
 
         // Prepare the Attributes list to update based on the existing attributes
         let attributes = attributes_fetched.unwrap();
-        let mut attributes_list: Vec<Attribute> = Vec::with_capacity(attributes.attribute_list.len());
+        let mut attributes_list: Vec<Attribute> =
+            Vec::with_capacity(attributes.attribute_list.len());
 
         let current_timestamp = Clock::get()?.unix_timestamp;
         let mut staked_timestamp: i64 = 0;
-        let mut last_claimed_timestamp: i64 = 0;
-        let mut last_claimed_found = false;
-        
+        let mut staked_time: i64 = 0;
+
         for attribute in &attributes.attribute_list {
             if attribute.key == "staked" {
                 require!(attribute.value == "true", CoreStakingError::AssetNotStaked);
             } else if attribute.key == "staked_at" {
-                staked_timestamp = attribute.value.parse::<i64>().map_err(|_| CoreStakingError::InvalidTimestamp)?;
-            } else if attribute.key == "last_claimed_at" {
-                last_claimed_timestamp = attribute.value.parse::<i64>().map_err(|_| CoreStakingError::InvalidTimestamp)?;
-                last_claimed_found = true;
+                staked_timestamp = attribute
+                    .value
+                    .parse::<i64>()
+                    .map_err(|_| CoreStakingError::InvalidTimestamp)?;
+
+                // Calculate outstanding rewards time
+                staked_time = current_timestamp
+                    .checked_sub(staked_timestamp)
+                    .ok_or(CoreStakingError::InvalidTimestamp)?;
+                staked_time = staked_time
+                    .checked_div(SECONDS_PER_DAY)
+                    .ok_or(CoreStakingError::InvalidTimestamp)?;
+                require!(
+                    staked_time >= self.config.freeze_period as i64,
+                    CoreStakingError::FreezePeriodNotElapsed
+                );
             } else {
                 attributes_list.push(attribute.clone());
             }
         }
 
-        if !last_claimed_found {
-            last_claimed_timestamp = staked_timestamp;
-        }
-
-        // Check freeze period (original stake time)
-        let total_staked_time = current_timestamp.checked_sub(staked_timestamp).ok_or(CoreStakingError::InvalidTimestamp)?;
-        let total_staked_days = total_staked_time.checked_div(SECONDS_PER_DAY).ok_or(CoreStakingError::InvalidTimestamp)?;
-        require!(total_staked_days >= self.config.freeze_period as i64, CoreStakingError::FreezePeriodNotElapsed);
-
-        // Calculate outstanding rewards time
-        let reward_time = current_timestamp.checked_sub(last_claimed_timestamp).ok_or(CoreStakingError::InvalidTimestamp)?;
-        let reward_days = reward_time.checked_div(SECONDS_PER_DAY).ok_or(CoreStakingError::InvalidTimestamp)?;
-
+        // Add the Staking attributes first (reset values)
         attributes_list.push(Attribute {
             key: "staked".to_string(),
             value: "false".to_string(),
         });
         attributes_list.push(Attribute {
             key: "staked_at".to_string(),
-            value: "0".to_string(),
-        });
-        attributes_list.push(Attribute {
-            key: "last_claimed_at".to_string(),
             value: "0".to_string(),
         });
 
@@ -137,7 +132,9 @@ impl<'info> Unstake<'info> {
             .payer(&self.owner.to_account_info())
             .authority(Some(&self.update_authority.to_account_info()))
             .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::Attributes(Attributes { attribute_list: attributes_list }))
+            .plugin(Plugin::Attributes(Attributes {
+                attribute_list: attributes_list,
+            }))
             .invoke_signed(&[signer_seeds])?;
 
         UpdatePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
@@ -150,22 +147,18 @@ impl<'info> Unstake<'info> {
             .invoke_signed(&[signer_seeds])?;
 
         // Prepare signer seeds for config PDA
-        let config_seeds = &[
-            CONFIG_SEED,
-            collection_key.as_ref(),
-            &[self.config.bump],
-        ];
+        let config_seeds = &[CONFIG_SEED, collection_key.as_ref(), &[self.config.bump]];
         let config_signer_seeds = &[&config_seeds[..]];
 
-        // Calculate the reward amount
-        let amount = (reward_days as u64)
+        // Calculate the amount
+        let amount = (staked_time as u64)
             .checked_mul(self.config.rewards_bps as u64)
             .ok_or(CoreStakingError::InvalidRewardsBps)?
             .checked_mul(10u64.pow(self.rewards_mint.decimals as u32))
             .ok_or(CoreStakingError::InvalidRewardsBps)?
             .checked_div(10000u64)
             .ok_or(CoreStakingError::InvalidRewardsBps)?;
-        
+
         mint_to_checked(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),

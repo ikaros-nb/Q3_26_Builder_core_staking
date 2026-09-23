@@ -1,9 +1,5 @@
 use anchor_lang::prelude::*;
-use mpl_core::{
-    ID as MPL_CORE_ID,
-    instructions::CreateV2CpiBuilder,
-    accounts::BaseCollectionV1,
-};
+use mpl_core::{accounts::BaseCollectionV1, instructions::CreateV2CpiBuilder, ID as MPL_CORE_ID};
 
 use crate::constants::UPDATE_AUTHORITY_SEED;
 
@@ -28,12 +24,7 @@ pub struct MintAsset<'info> {
 }
 
 impl<'info> MintAsset<'info> {
-    pub fn mint_asset(
-        &self,
-        name: String,
-        uri: String,
-        bumps: &MintAssetBumps,
-    ) -> Result<()> {
+    pub fn mint_asset(&self, name: String, uri: String, bumps: &MintAssetBumps) -> Result<()> {
         // Signer seeds for the update authority
         let collection_key = self.collection.key();
         let signer_seeds = &[

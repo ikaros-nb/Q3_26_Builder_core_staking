@@ -15,11 +15,20 @@ declare_id!("G8LCc1EkmWZApyYgdYbiUGY6KCETY4q4KwAYo31y7822");
 pub mod q3_26_core_staking {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, rewards_bps: u16, freeze_period: u16) -> Result<()> {
-        ctx.accounts.initialize(rewards_bps, freeze_period, &ctx.bumps)
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        rewards_bps: u16,
+        freeze_period: u16,
+    ) -> Result<()> {
+        ctx.accounts
+            .initialize(rewards_bps, freeze_period, &ctx.bumps)
     }
 
-    pub fn create_collection(ctx: Context<CreateCollection>, name: String, uri: String) -> Result<()> {
+    pub fn create_collection(
+        ctx: Context<CreateCollection>,
+        name: String,
+        uri: String,
+    ) -> Result<()> {
         ctx.accounts.create_collection(name, uri, &ctx.bumps)
     }
 

@@ -1,15 +1,13 @@
+use crate::{constants::*, error::CoreStakingError, state::Config};
 use anchor_lang::prelude::*;
 use mpl_core::{
-    ID as MPL_CORE_ID,
     accounts::{BaseAssetV1, BaseCollectionV1},
-    instructions::{AddPluginV1CpiBuilder, UpdatePluginV1CpiBuilder},
-    types::{UpdateAuthority, Attribute, Attributes, Plugin, PluginAuthority, PluginType, FreezeDelegate},
     fetch_plugin,
-};
-use crate::{
-    constants::*,
-    error::CoreStakingError,
-    state::Config,
+    instructions::{AddPluginV1CpiBuilder, UpdatePluginV1CpiBuilder},
+    types::{
+        Attribute, Attributes, FreezeDelegate, Plugin, PluginAuthority, PluginType, UpdateAuthority,
+    },
+    ID as MPL_CORE_ID,
 };
 
 #[derive(Accounts)]
@@ -48,12 +46,12 @@ impl<'info> Stake<'info> {
     pub fn stake(&self, bumps: &StakeBumps) -> Result<()> {
         // We start by fetching the existing attributes (if they exist)
         let attributes_fetched: Option<Attributes> = fetch_plugin::<BaseAssetV1, Attributes>(
-            &self.asset.to_account_info(), 
+            &self.asset.to_account_info(),
             PluginType::Attributes,
         )
         .ok()
-        .map(|(_,attrs,_)| attrs);
-        
+        .map(|(_, attrs, _)| attrs);
+
         // Prepare the Attributes list to add or update based on the existing attributes
         let mut attributes_list: Vec<Attribute> = Vec::new();
 
@@ -93,38 +91,42 @@ impl<'info> Stake<'info> {
         // If the Attributes Plugin does not exist, we add it
         if attributes_fetched.is_none() {
             AddPluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
-            .asset(&self.asset.to_account_info())
-            .collection(Some(&self.collection.to_account_info()))
-            .payer(&self.owner.to_account_info())
-            .authority(Some(&self.update_authority.to_account_info()))
-            .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::Attributes(Attributes { attribute_list: attributes_list }))
-            .init_authority(PluginAuthority::UpdateAuthority)
-            .invoke_signed(&[signer_seeds])?;
+                .asset(&self.asset.to_account_info())
+                .collection(Some(&self.collection.to_account_info()))
+                .payer(&self.owner.to_account_info())
+                .authority(Some(&self.update_authority.to_account_info()))
+                .system_program(&self.system_program.to_account_info())
+                .plugin(Plugin::Attributes(Attributes {
+                    attribute_list: attributes_list,
+                }))
+                .init_authority(PluginAuthority::UpdateAuthority)
+                .invoke_signed(&[signer_seeds])?;
         }
         // If the Attributes Plugin exists, we update it
         else {
             UpdatePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
-            .asset(&self.asset.to_account_info())
-            .collection(Some(&self.collection.to_account_info()))
-            .payer(&self.owner.to_account_info())
-            .authority(Some(&self.update_authority.to_account_info()))
-            .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::Attributes(Attributes { attribute_list: attributes_list }))
-            .invoke_signed(&[signer_seeds])?;
+                .asset(&self.asset.to_account_info())
+                .collection(Some(&self.collection.to_account_info()))
+                .payer(&self.owner.to_account_info())
+                .authority(Some(&self.update_authority.to_account_info()))
+                .system_program(&self.system_program.to_account_info())
+                .plugin(Plugin::Attributes(Attributes {
+                    attribute_list: attributes_list,
+                }))
+                .invoke_signed(&[signer_seeds])?;
         }
 
         // Freeze the asset with the FreezeDelegate Plugin
         // Note that the FreezeDelegate is a Owner-Managed Plugin, so it needs to be signed by the owner
         AddPluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
-        .asset(&self.asset.to_account_info())
-        .collection(Some(&self.collection.to_account_info()))
-        .payer(&self.owner.to_account_info())
-        .authority(Some(&self.owner.to_account_info()))
-        .system_program(&self.system_program.to_account_info())
-        .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true }))
-        .init_authority(PluginAuthority::UpdateAuthority)
-        .invoke()?;
+            .asset(&self.asset.to_account_info())
+            .collection(Some(&self.collection.to_account_info()))
+            .payer(&self.owner.to_account_info())
+            .authority(Some(&self.owner.to_account_info()))
+            .system_program(&self.system_program.to_account_info())
+            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true }))
+            .init_authority(PluginAuthority::UpdateAuthority)
+            .invoke()?;
 
         Ok(())
     }

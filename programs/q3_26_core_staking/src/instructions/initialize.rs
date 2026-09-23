@@ -3,11 +3,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenInterface};
 use mpl_core::accounts::BaseCollectionV1;
 
-use crate::{
-    constants::*,
-    error::CoreStakingError,
-    state::Config,
-};
+use crate::{constants::*, error::CoreStakingError, state::Config};
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
@@ -57,7 +53,7 @@ impl<'info> Initialize<'info> {
             rewards_bump: bumps.rewards_mint,
             bump: bumps.config,
         });
-    
+
         Ok(())
     }
 }

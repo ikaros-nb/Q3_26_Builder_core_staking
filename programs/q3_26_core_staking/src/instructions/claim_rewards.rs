@@ -1,19 +1,15 @@
+use crate::{constants::*, error::CoreStakingError, state::Config};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{mint_to_checked, Mint, MintToChecked, TokenAccount, TokenInterface}
+    token_interface::{mint_to_checked, Mint, MintToChecked, TokenAccount, TokenInterface},
 };
 use mpl_core::{
-    ID as MPL_CORE_ID,
     accounts::{BaseAssetV1, BaseCollectionV1},
-    instructions::UpdatePluginV1CpiBuilder,
-    types::{UpdateAuthority, Attribute, Attributes, Plugin, PluginType},
     fetch_plugin,
-};
-use crate::{
-    constants::*,
-    error::CoreStakingError,
-    state::Config,
+    instructions::UpdatePluginV1CpiBuilder,
+    types::{Attribute, Attributes, Plugin, PluginType, UpdateAuthority},
+    ID as MPL_CORE_ID,
 };
 
 #[derive(Accounts)]
@@ -66,31 +62,41 @@ impl<'info> ClaimRewards<'info> {
     pub fn claim_rewards(&self, bumps: &ClaimRewardsBumps) -> Result<()> {
         // We start by fetching the existing attributes (if they exist)
         let attributes_fetched: Option<Attributes> = fetch_plugin::<BaseAssetV1, Attributes>(
-            &self.asset.to_account_info(), 
+            &self.asset.to_account_info(),
             PluginType::Attributes,
         )
         .ok()
-        .map(|(_,attrs,_)| attrs);
-        
+        .map(|(_, attrs, _)| attrs);
+
         // If the attributes don't exist, we return an error
-        require!(attributes_fetched.is_some(), CoreStakingError::AssetNotStaked);
+        require!(
+            attributes_fetched.is_some(),
+            CoreStakingError::AssetNotStaked
+        );
 
         // Prepare the Attributes list to update based on the existing attributes
         let attributes = attributes_fetched.unwrap();
-        let mut attributes_list: Vec<Attribute> = Vec::with_capacity(attributes.attribute_list.len());
+        let mut attributes_list: Vec<Attribute> =
+            Vec::with_capacity(attributes.attribute_list.len());
 
         let current_timestamp = Clock::get()?.unix_timestamp;
         let mut staked_timestamp: i64 = 0;
         let mut last_claimed_timestamp: i64 = 0;
         let mut last_claimed_found = false;
-        
+
         for attribute in &attributes.attribute_list {
             if attribute.key == "staked" {
                 require!(attribute.value == "true", CoreStakingError::AssetNotStaked);
             } else if attribute.key == "staked_at" {
-                staked_timestamp = attribute.value.parse::<i64>().map_err(|_| CoreStakingError::InvalidTimestamp)?;
+                staked_timestamp = attribute
+                    .value
+                    .parse::<i64>()
+                    .map_err(|_| CoreStakingError::InvalidTimestamp)?;
             } else if attribute.key == "last_claimed_at" {
-                last_claimed_timestamp = attribute.value.parse::<i64>().map_err(|_| CoreStakingError::InvalidTimestamp)?;
+                last_claimed_timestamp = attribute
+                    .value
+                    .parse::<i64>()
+                    .map_err(|_| CoreStakingError::InvalidTimestamp)?;
                 last_claimed_found = true;
             } else {
                 attributes_list.push(attribute.clone());
@@ -111,16 +117,24 @@ impl<'info> ClaimRewards<'info> {
         });
 
         // Calculate elapsed time (in seconds) since the last claim/stake
-        let elapsed_time = current_timestamp.checked_sub(last_claimed_timestamp).ok_or(CoreStakingError::InvalidTimestamp)?;
+        let elapsed_time = current_timestamp
+            .checked_sub(last_claimed_timestamp)
+            .ok_or(CoreStakingError::InvalidTimestamp)?;
         // Elapsed time in days
-        let elapsed_days = elapsed_time.checked_div(SECONDS_PER_DAY).ok_or(CoreStakingError::InvalidTimestamp)?;
+        let elapsed_days = elapsed_time
+            .checked_div(SECONDS_PER_DAY)
+            .ok_or(CoreStakingError::InvalidTimestamp)?;
 
         // We must have at least one day elapsed to claim
         require!(elapsed_days > 0, CoreStakingError::NoRewardsToClaim);
 
         // last_claimed_at is set to the last claimed timestamp + elapsed days in seconds to preserve fractional seconds
         let new_last_claimed = last_claimed_timestamp
-            .checked_add(elapsed_days.checked_mul(SECONDS_PER_DAY).ok_or(CoreStakingError::InvalidTimestamp)?)
+            .checked_add(
+                elapsed_days
+                    .checked_mul(SECONDS_PER_DAY)
+                    .ok_or(CoreStakingError::InvalidTimestamp)?,
+            )
             .ok_or(CoreStakingError::InvalidTimestamp)?;
 
         attributes_list.push(Attribute {
@@ -142,17 +156,14 @@ impl<'info> ClaimRewards<'info> {
             .payer(&self.owner.to_account_info())
             .authority(Some(&self.update_authority.to_account_info()))
             .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::Attributes(Attributes { attribute_list: attributes_list }))
+            .plugin(Plugin::Attributes(Attributes {
+                attribute_list: attributes_list,
+            }))
             .invoke_signed(&[signer_seeds])?;
 
         // Prepare signer seeds for config PDA
-        let config_seeds = &[
-            CONFIG_SEED,
-            collection_key.as_ref(),
-            &[self.config.bump],
-        ];
+        let config_seeds = &[CONFIG_SEED, collection_key.as_ref(), &[self.config.bump]];
         let config_signer_seeds = &[&config_seeds[..]];
-
 
         // Calculate the reward amount
         let amount = (elapsed_days as u64)
@@ -162,7 +173,7 @@ impl<'info> ClaimRewards<'info> {
             .ok_or(CoreStakingError::InvalidRewardsBps)?
             .checked_div(10000u64)
             .ok_or(CoreStakingError::InvalidRewardsBps)?;
-        
+
         mint_to_checked(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),

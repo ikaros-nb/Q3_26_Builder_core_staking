@@ -1,8 +1,5 @@
 use anchor_lang::prelude::*;
-use mpl_core::{
-    ID as MPL_CORE_ID,
-    instructions::CreateCollectionV2CpiBuilder,
-};
+use mpl_core::{instructions::CreateCollectionV2CpiBuilder, ID as MPL_CORE_ID};
 
 use crate::constants::UPDATE_AUTHORITY_SEED;
 
