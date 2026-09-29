@@ -5,7 +5,8 @@ use mpl_core::{
     fetch_plugin,
     instructions::{AddPluginV1CpiBuilder, UpdatePluginV1CpiBuilder},
     types::{
-        Attribute, Attributes, FreezeDelegate, Plugin, PluginAuthority, PluginType, UpdateAuthority,
+        Attribute, Attributes, BurnDelegate, FreezeDelegate, Plugin, PluginAuthority, PluginType,
+        UpdateAuthority,
     },
     ID as MPL_CORE_ID,
 };
@@ -115,6 +116,18 @@ impl<'info> Stake<'info> {
                 }))
                 .invoke_signed(&[signer_seeds])?;
         }
+
+        // Delegate burn authority with the BurnDelegate Plugin, so burn_staked_nft can burn the asset
+        // Note that the BurnDelegate is a Owner-Managed Plugin, so it needs to be signed by the owner
+        AddPluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
+            .asset(&self.asset.to_account_info())
+            .collection(Some(&self.collection.to_account_info()))
+            .payer(&self.owner.to_account_info())
+            .authority(Some(&self.owner.to_account_info()))
+            .system_program(&self.system_program.to_account_info())
+            .plugin(Plugin::BurnDelegate(BurnDelegate {}))
+            .init_authority(PluginAuthority::UpdateAuthority)
+            .invoke()?;
 
         // Freeze the asset with the FreezeDelegate Plugin
         // Note that the FreezeDelegate is a Owner-Managed Plugin, so it needs to be signed by the owner

@@ -7,13 +7,13 @@ use anchor_spl::{
 use mpl_core::{
     accounts::{BaseAssetV1, BaseCollectionV1},
     fetch_plugin,
-    instructions::{RemovePluginV1CpiBuilder, UpdatePluginV1CpiBuilder},
-    types::{Attribute, Attributes, FreezeDelegate, Plugin, PluginType, UpdateAuthority},
+    instructions::{BurnV1CpiBuilder, UpdatePluginV1CpiBuilder},
+    types::{Attributes, FreezeDelegate, Plugin, PluginType, UpdateAuthority},
     ID as MPL_CORE_ID,
 };
 
 #[derive(Accounts)]
-pub struct Unstake<'info> {
+pub struct BurnStakedNft<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
     #[account(
@@ -58,64 +58,67 @@ pub struct Unstake<'info> {
     pub mpl_core_program: UncheckedAccount<'info>,
 }
 
-impl<'info> Unstake<'info> {
-    pub fn unstake(&self, bumps: &UnstakeBumps) -> Result<()> {
-        // We start by fetching the existing attributes (if they exist)
-        let attributes_fetched: Option<Attributes> = fetch_plugin::<BaseAssetV1, Attributes>(
+impl<'info> BurnStakedNft<'info> {
+    pub fn burn_staked_nft(&self, bumps: &BurnStakedNftBumps) -> Result<()> {
+        // We start by fetching the existing attributes; if the plugin is missing the asset is not staked
+        let attributes: Attributes = fetch_plugin::<BaseAssetV1, Attributes>(
             &self.asset.to_account_info(),
             PluginType::Attributes,
         )
-        .ok()
-        .map(|(_, attrs, _)| attrs);
+        .map(|(_, attrs, _)| attrs)
+        .map_err(|_| CoreStakingError::AssetNotStaked)?;
 
-        // If the attributes don't exist, we return an error
-        require!(
-            attributes_fetched.is_some(),
-            CoreStakingError::AssetNotStaked
-        );
+        let mut staked_found = false;
+        let mut staked_timestamp: Option<i64> = None;
 
-        // Prepare the Attributes list to update based on the existing attributes
-        let attributes = attributes_fetched.unwrap();
-        let mut attributes_list: Vec<Attribute> =
-            Vec::with_capacity(attributes.attribute_list.len());
-
-        let current_timestamp = Clock::get()?.unix_timestamp;
-        let mut staked_time: i64 = 0;
-
+        // No need to rebuild the attributes list: the asset and its plugins are gone after the burn
         for attribute in &attributes.attribute_list {
             if attribute.key == "staked" {
                 require!(attribute.value == "true", CoreStakingError::AssetNotStaked);
+                staked_found = true;
             } else if attribute.key == "staked_at" {
-                let staked_timestamp = attribute
-                    .value
-                    .parse::<i64>()
-                    .map_err(|_| CoreStakingError::InvalidTimestamp)?;
-
-                // Calculate outstanding rewards time
-                staked_time = current_timestamp
-                    .checked_sub(staked_timestamp)
-                    .ok_or(CoreStakingError::InvalidTimestamp)?;
-                staked_time = staked_time
-                    .checked_div(SECONDS_PER_DAY)
-                    .ok_or(CoreStakingError::InvalidTimestamp)?;
-                require!(
-                    staked_time >= self.config.freeze_period as i64,
-                    CoreStakingError::FreezePeriodNotElapsed
+                staked_timestamp = Some(
+                    attribute
+                        .value
+                        .parse::<i64>()
+                        .map_err(|_| CoreStakingError::InvalidTimestamp)?,
                 );
-            } else {
-                attributes_list.push(attribute.clone());
             }
         }
 
-        // Add the Staking attributes first (reset values)
-        attributes_list.push(Attribute {
-            key: "staked".to_string(),
-            value: "false".to_string(),
-        });
-        attributes_list.push(Attribute {
-            key: "staked_at".to_string(),
-            value: "0".to_string(),
-        });
+        // Both staking attributes must be present, otherwise the asset is not staked by this program
+        require!(staked_found, CoreStakingError::AssetNotStaked);
+        let staked_timestamp = staked_timestamp.ok_or(CoreStakingError::AssetNotStaked)?;
+
+        // Elapsed time in whole days since the last checkpoint (stake or previous claim)
+        let elapsed_days = Clock::get()?
+            .unix_timestamp
+            .checked_sub(staked_timestamp)
+            .ok_or(CoreStakingError::InvalidTimestamp)?
+            .checked_div(SECONDS_PER_DAY)
+            .ok_or(CoreStakingError::InvalidTimestamp)?;
+
+        // Same lock as unstake, otherwise burning would be a way around the freeze period
+        require!(
+            elapsed_days >= self.config.freeze_period as i64,
+            CoreStakingError::FreezePeriodNotElapsed
+        );
+
+        // Calculate the amount before burning: the asset account is closed afterwards
+        let decimals_factor = 10u64.pow(self.rewards_mint.decimals as u32);
+        let staking_rewards = (elapsed_days as u64)
+            .checked_mul(self.config.rewards_bps as u64)
+            .ok_or(CoreStakingError::InvalidRewardsBps)?
+            .checked_mul(decimals_factor)
+            .ok_or(CoreStakingError::InvalidRewardsBps)?
+            .checked_div(10000u64)
+            .ok_or(CoreStakingError::InvalidRewardsBps)?;
+        let burn_bonus = BURN_BONUS
+            .checked_mul(decimals_factor)
+            .ok_or(CoreStakingError::InvalidRewardsBps)?;
+        let amount = staking_rewards
+            .checked_add(burn_bonus)
+            .ok_or(CoreStakingError::InvalidRewardsBps)?;
 
         // Prepare signing seeds for the update authority
         let collection_key = self.collection.key();
@@ -125,17 +128,8 @@ impl<'info> Unstake<'info> {
             &[bumps.update_authority],
         ];
 
-        UpdatePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
-            .asset(&self.asset.to_account_info())
-            .collection(Some(&self.collection.to_account_info()))
-            .payer(&self.owner.to_account_info())
-            .authority(Some(&self.update_authority.to_account_info()))
-            .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::Attributes(Attributes {
-                attribute_list: attributes_list,
-            }))
-            .invoke_signed(&[signer_seeds])?;
-
+        // A frozen asset rejects burns, even from the BurnDelegate, so we thaw it first
+        // The FreezeDelegate authority is the update authority (PDA of the program), see stake
         UpdatePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(Some(&self.collection.to_account_info()))
@@ -145,32 +139,18 @@ impl<'info> Unstake<'info> {
             .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: false }))
             .invoke_signed(&[signer_seeds])?;
 
-        // Remove the delegates added on stake, otherwise re-staking fails because stake adds them again
-        // This must happen after thawing: a frozen asset rejects plugin removal
-        // They are Owner-Managed Plugins, so the owner can remove them
-        for plugin_type in [PluginType::FreezeDelegate, PluginType::BurnDelegate] {
-            RemovePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
-                .asset(&self.asset.to_account_info())
-                .collection(Some(&self.collection.to_account_info()))
-                .payer(&self.owner.to_account_info())
-                .authority(Some(&self.owner.to_account_info()))
-                .system_program(&self.system_program.to_account_info())
-                .plugin_type(plugin_type)
-                .invoke()?;
-        }
+        // Burn the asset as the BurnDelegate added on stake (its authority is the update authority)
+        BurnV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
+            .asset(&self.asset.to_account_info())
+            .collection(Some(&self.collection.to_account_info()))
+            .payer(&self.owner.to_account_info())
+            .authority(Some(&self.update_authority.to_account_info()))
+            .system_program(Some(&self.system_program.to_account_info()))
+            .invoke_signed(&[signer_seeds])?;
 
         // Prepare signer seeds for config PDA
         let config_seeds = &[CONFIG_SEED, collection_key.as_ref(), &[self.config.bump]];
         let config_signer_seeds = &[&config_seeds[..]];
-
-        // Calculate the amount
-        let amount = (staked_time as u64)
-            .checked_mul(self.config.rewards_bps as u64)
-            .ok_or(CoreStakingError::InvalidRewardsBps)?
-            .checked_mul(10u64.pow(self.rewards_mint.decimals as u32))
-            .ok_or(CoreStakingError::InvalidRewardsBps)?
-            .checked_div(10000u64)
-            .ok_or(CoreStakingError::InvalidRewardsBps)?;
 
         mint_to_checked(
             CpiContext::new_with_signer(
