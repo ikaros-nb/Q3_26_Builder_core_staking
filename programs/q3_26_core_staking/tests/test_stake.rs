@@ -1,7 +1,7 @@
 mod common;
 
 use anchor_lang::prelude::Pubkey;
-use common::{assert_mpl_core_error, assert_program_error, stake_instruction, Scenario};
+use common::{assert_mpl_core_error, assert_program_error, stake_instruction, succeed, Scenario};
 use mpl_core::{errors::MplCoreError, instructions::TransferV1Builder, types::PluginAuthority};
 use q3_26_core_staking::error::CoreStakingError;
 use solana_signer::Signer;
@@ -26,6 +26,27 @@ fn marks_the_asset_staked_and_freezes_it() {
         plugins.burn_delegate.unwrap().base.authority,
         PluginAuthority::UpdateAuthority.into()
     );
+}
+
+#[test]
+fn increments_the_collection_total_staked() {
+    let mut scenario = Scenario::new();
+    assert_eq!(scenario.total_staked(), None);
+
+    scenario.stake();
+
+    assert_eq!(scenario.total_staked(), Some(1));
+}
+
+#[test]
+fn counts_every_asset_staked_in_the_collection() {
+    let mut scenario = Scenario::staked();
+    let other = scenario.mint_another_asset();
+    let stake = stake_instruction(&scenario.user.pubkey(), &other, &scenario.collection);
+
+    succeed(scenario.env.send(&[stake], &[&scenario.user]));
+
+    assert_eq!(scenario.total_staked(), Some(2));
 }
 
 #[test]
@@ -55,6 +76,7 @@ fn rejects_an_asset_already_staked() {
 
     let failed = scenario.try_stake().unwrap_err();
     assert_program_error(&failed, CoreStakingError::AlreadyStaked);
+    assert_eq!(scenario.total_staked(), Some(1));
 }
 
 #[test]

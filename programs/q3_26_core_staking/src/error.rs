@@ -18,4 +18,6 @@ pub enum CoreStakingError {
     InvalidRewardsBps,
     #[msg("No rewards to claim")]
     NoRewardsToClaim,
+    #[msg("Invalid total staked counter")]
+    InvalidTotalStaked,
 }

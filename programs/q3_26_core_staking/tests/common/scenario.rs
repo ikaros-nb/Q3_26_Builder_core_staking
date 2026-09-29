@@ -134,12 +134,33 @@ impl Scenario {
         succeed(self.try_burn());
     }
 
+    /// A second asset minted to the user, not staked.
+    pub fn mint_another_asset(&mut self) -> Pubkey {
+        let asset = Keypair::new();
+        succeed(self.env.send(
+            &[mint_asset_instruction(
+                &self.user.pubkey(),
+                &asset.pubkey(),
+                &self.collection,
+            )],
+            &[&self.user, &asset],
+        ));
+        asset.pubkey()
+    }
+
     pub fn rewards(&self) -> u64 {
         self.env.rewards(&self.user.pubkey(), &self.collection)
     }
 
     pub fn attribute(&self, key: &str) -> Option<String> {
         self.env.attribute(&self.asset, key)
+    }
+
+    /// The "total_staked" counter of the collection, `None` before the first stake.
+    pub fn total_staked(&self) -> Option<u64> {
+        self.env
+            .collection_attribute(&self.collection, "total_staked")
+            .map(|value| value.parse().unwrap())
     }
 
     pub fn is_frozen(&self) -> bool {

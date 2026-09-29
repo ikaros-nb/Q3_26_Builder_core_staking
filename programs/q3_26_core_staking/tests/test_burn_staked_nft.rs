@@ -31,6 +31,16 @@ fn burns_the_asset_and_pays_rewards_plus_the_bonus() {
 }
 
 #[test]
+fn decrements_the_collection_total_staked() {
+    let mut scenario = Scenario::staked();
+    scenario.env.warp(days(FREEZE_PERIOD));
+
+    scenario.burn();
+
+    assert_eq!(scenario.total_staked(), Some(0));
+}
+
+#[test]
 fn rejects_an_asset_that_is_not_staked() {
     let mut scenario = Scenario::new();
     scenario.env.warp(days(FREEZE_PERIOD));

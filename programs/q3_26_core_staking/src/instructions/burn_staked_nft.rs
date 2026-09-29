@@ -1,4 +1,4 @@
-use crate::{constants::*, error::CoreStakingError, state::Config};
+use crate::{constants::*, error::CoreStakingError, state::Config, utils::update_total_staked};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -147,6 +147,17 @@ impl<'info> BurnStakedNft<'info> {
             .authority(Some(&self.update_authority.to_account_info()))
             .system_program(Some(&self.system_program.to_account_info()))
             .invoke_signed(&[signer_seeds])?;
+
+        // The burned asset leaves the staking: same decrement as unstake, otherwise the counter drifts
+        update_total_staked(
+            -1,
+            &self.collection.to_account_info(),
+            &self.owner.to_account_info(),
+            &self.update_authority.to_account_info(),
+            &self.system_program.to_account_info(),
+            &self.mpl_core_program.to_account_info(),
+            signer_seeds,
+        )?;
 
         // Prepare signer seeds for config PDA
         let config_seeds = &[CONFIG_SEED, collection_key.as_ref(), &[self.config.bump]];

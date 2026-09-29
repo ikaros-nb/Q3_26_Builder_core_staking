@@ -13,7 +13,7 @@ use litesvm::{
     types::{FailedTransactionMetadata, TransactionMetadata, TransactionResult},
     LiteSVM,
 };
-use mpl_core::{accounts::BaseCollectionV1, errors::MplCoreError, Asset};
+use mpl_core::{accounts::BaseCollectionV1, errors::MplCoreError, Asset, Collection, PluginsList};
 use q3_26_core_staking::{error::CoreStakingError, state::Config};
 use solana_keypair::Keypair;
 use solana_message::{Message, VersionedMessage};
@@ -120,17 +120,29 @@ impl Env {
         BaseCollectionV1::from_bytes(&account.data).ok()
     }
 
-    /// Value of one key of the Attributes plugin.
+    /// Value of one key of the asset Attributes plugin.
     pub fn attribute(&self, asset: &Pubkey, key: &str) -> Option<String> {
-        self.asset(asset)?
-            .plugin_list
-            .attributes?
-            .attributes
-            .attribute_list
-            .into_iter()
-            .find(|attribute| attribute.key == key)
-            .map(|attribute| attribute.value)
+        find_attribute(self.asset(asset)?.plugin_list, key)
     }
+
+    /// Value of one key of the collection Attributes plugin.
+    pub fn collection_attribute(&self, collection: &Pubkey, key: &str) -> Option<String> {
+        let account = self.svm.get_account(collection)?;
+        find_attribute(
+            Collection::deserialize(&account.data).ok()?.plugin_list,
+            key,
+        )
+    }
+}
+
+fn find_attribute(plugins: PluginsList, key: &str) -> Option<String> {
+    plugins
+        .attributes?
+        .attributes
+        .attribute_list
+        .into_iter()
+        .find(|attribute| attribute.key == key)
+        .map(|attribute| attribute.value)
 }
 
 /// Happy path: panics with the logs if the transaction fails.
@@ -149,8 +161,7 @@ pub fn assert_mpl_core_error(failed: &FailedTransactionMetadata, expected: MplCo
 }
 
 fn assert_custom_error(failed: &FailedTransactionMetadata, code: u32, name: &str) {
-    let expected_err =
-        TransactionError::InstructionError(0, InstructionError::Custom(code));
+    let expected_err = TransactionError::InstructionError(0, InstructionError::Custom(code));
     assert_eq!(
         failed.err, expected_err,
         "expected {name}\n{:#?}",

@@ -1,4 +1,4 @@
-use crate::{constants::*, error::CoreStakingError, state::Config};
+use crate::{constants::*, error::CoreStakingError, state::Config, utils::update_total_staked};
 use anchor_lang::prelude::*;
 use mpl_core::{
     accounts::{BaseAssetV1, BaseCollectionV1},
@@ -140,6 +140,17 @@ impl<'info> Stake<'info> {
             .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true }))
             .init_authority(PluginAuthority::UpdateAuthority)
             .invoke()?;
+
+        // One more asset staked in the collection
+        update_total_staked(
+            1,
+            &self.collection.to_account_info(),
+            &self.owner.to_account_info(),
+            &self.update_authority.to_account_info(),
+            &self.system_program.to_account_info(),
+            &self.mpl_core_program.to_account_info(),
+            signer_seeds,
+        )?;
 
         Ok(())
     }

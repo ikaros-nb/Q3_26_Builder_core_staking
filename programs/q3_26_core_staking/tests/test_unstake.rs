@@ -29,6 +29,16 @@ fn pays_rewards_and_releases_the_asset() {
 }
 
 #[test]
+fn decrements_the_collection_total_staked() {
+    let mut scenario = Scenario::staked();
+    scenario.env.warp(days(FREEZE_PERIOD));
+
+    scenario.unstake();
+
+    assert_eq!(scenario.total_staked(), Some(0));
+}
+
+#[test]
 fn the_asset_can_be_staked_again() {
     let mut scenario = Scenario::staked();
     scenario.env.warp(days(FREEZE_PERIOD));
@@ -38,6 +48,7 @@ fn the_asset_can_be_staked_again() {
 
     assert_eq!(scenario.attribute("staked").as_deref(), Some("true"));
     assert!(scenario.is_frozen());
+    assert_eq!(scenario.total_staked(), Some(1));
 }
 
 #[test]

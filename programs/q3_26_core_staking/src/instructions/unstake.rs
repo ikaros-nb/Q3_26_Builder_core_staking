@@ -1,4 +1,4 @@
-use crate::{constants::*, error::CoreStakingError, state::Config};
+use crate::{constants::*, error::CoreStakingError, state::Config, utils::update_total_staked};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -158,6 +158,17 @@ impl<'info> Unstake<'info> {
                 .plugin_type(plugin_type)
                 .invoke()?;
         }
+
+        // One less asset staked in the collection
+        update_total_staked(
+            -1,
+            &self.collection.to_account_info(),
+            &self.owner.to_account_info(),
+            &self.update_authority.to_account_info(),
+            &self.system_program.to_account_info(),
+            &self.mpl_core_program.to_account_info(),
+            signer_seeds,
+        )?;
 
         // Prepare signer seeds for config PDA
         let config_seeds = &[CONFIG_SEED, collection_key.as_ref(), &[self.config.bump]];
