@@ -1,77 +1,72 @@
-// use {
-//     anchor_lang::{
-//         prelude::Pubkey,
-//         solana_program::{instruction::Instruction, system_program},
-//         AccountDeserialize, InstructionData, ToAccountMetas,
-//     },
-//     litesvm::LiteSVM,
-//     solana_keypair::Keypair,
-//     solana_message::{Message, VersionedMessage},
-//     solana_signer::Signer,
-//     solana_transaction::versioned::VersionedTransaction,
-// };
+mod common;
 
-// #[test]
-// fn test_initialize() {
-//     let program_id = q3_26_core_staking::id();
-//     let payer = Keypair::new();
-//     let counter = Pubkey::find_program_address(
-//         &[q3_26_core_staking::constants::COUNTER_SEED],
-//         &program_id,
-//     )
-//     .0;
-//     let mut svm = LiteSVM::new();
-//     let bytes = include_bytes!(concat!(
-//         env!("CARGO_TARGET_TMPDIR"),
-//         "/../deploy/q3_26_core_staking.so"
-//     ));
-//     svm.add_program(program_id, bytes).unwrap();
-//     svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
+use anchor_lang::solana_program::program_option::COption;
+use common::{
+    assert_failed_with, assert_program_error, config_pda, initialize_instruction, succeed, Env,
+    Scenario, FREEZE_PERIOD, REWARDS_BPS,
+};
+use mpl_core::instructions::CreateCollectionV2Builder;
+use q3_26_core_staking::error::CoreStakingError;
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 
-//     let instruction = Instruction::new_with_bytes(
-//         program_id,
-//         &q3_26_core_staking::instruction::Initialize {}.data(),
-//         q3_26_core_staking::accounts::Initialize {
-//             payer: payer.pubkey(),
-//             counter,
-//             system_program: system_program::ID,
-//         }
-//         .to_account_metas(None),
-//     );
+#[test]
+fn stores_the_config_and_creates_the_rewards_mint() {
+    let scenario = Scenario::new();
 
-//     let blockhash = svm.latest_blockhash();
-//     let msg = Message::new_with_blockhash(&[instruction], Some(&payer.pubkey()), &blockhash);
-//     let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[&payer]).unwrap();
+    let config = scenario.env.config(&scenario.collection).unwrap();
+    assert_eq!(config.rewards_bps, REWARDS_BPS);
+    assert_eq!(config.freeze_period, FREEZE_PERIOD);
 
-//     let res = svm.send_transaction(tx);
-//     assert!(res.is_ok());
+    let mint = scenario.env.rewards_mint(&scenario.collection).unwrap();
+    assert_eq!(mint.decimals, 6);
+    assert_eq!(mint.supply, 0);
 
-//     let counter_account = svm.get_account(&counter).unwrap();
-//     let mut data: &[u8] = &counter_account.data;
-//     let counter_state = q3_26_core_staking::state::Counter::try_deserialize(&mut data).unwrap();
-//     assert_eq!(counter_state.count, 0);
-//     assert_eq!(counter_state.authority, payer.pubkey());
+    assert_eq!(
+        mint.mint_authority,
+        COption::Some(config_pda(&scenario.collection))
+    );
+}
 
-//     let instruction = Instruction::new_with_bytes(
-//         program_id,
-//         &q3_26_core_staking::instruction::Increment {}.data(),
-//         q3_26_core_staking::accounts::Increment {
-//             counter,
-//             authority: payer.pubkey(),
-//         }
-//         .to_account_metas(None),
-//     );
+#[test]
+fn cannot_be_initialized_twice() {
+    let mut scenario = Scenario::new();
+    let admin = scenario.env.payer.pubkey();
 
-//     let blockhash = svm.latest_blockhash();
-//     let msg = Message::new_with_blockhash(&[instruction], Some(&payer.pubkey()), &blockhash);
-//     let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[&payer]).unwrap();
+    let failed = scenario
+        .env
+        .send(
+            &[initialize_instruction(&admin, &scenario.collection, 1, 1)],
+            &[],
+        )
+        .unwrap_err();
+    assert_failed_with(&failed, "Custom(0)");
+}
 
-//     let res = svm.send_transaction(tx);
-//     assert!(res.is_ok());
+#[test]
+fn rejects_a_collection_the_program_does_not_control() {
+    let mut env = Env::new();
+    let admin = env.payer.pubkey();
+    let collection = Keypair::new();
 
-//     let counter_account = svm.get_account(&counter).unwrap();
-//     let mut data: &[u8] = &counter_account.data;
-//     let counter_state = q3_26_core_staking::state::Counter::try_deserialize(&mut data).unwrap();
-//     assert_eq!(counter_state.count, 1);
-//     assert_eq!(counter_state.authority, payer.pubkey());
-// }
+    let create = CreateCollectionV2Builder::new()
+        .collection(collection.pubkey())
+        .payer(admin)
+        .name("Foreign Collection".to_string())
+        .uri("https://example.com/foreign.json".to_string())
+        .instruction();
+    succeed(env.send(&[create], &[&collection]));
+
+    let failed = env
+        .send(
+            &[initialize_instruction(
+                &admin,
+                &collection.pubkey(),
+                REWARDS_BPS,
+                FREEZE_PERIOD,
+            )],
+            &[],
+        )
+        .unwrap_err();
+    assert_program_error(&failed, CoreStakingError::InvalidUpdateAuthority);
+}

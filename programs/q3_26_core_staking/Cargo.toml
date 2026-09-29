@@ -35,11 +35,12 @@ anchor-spl = "0.32.2"
 mpl-core = { version = "0.12.1", default-features = false, features = ["anchor-0-32"] }
 
 [dev-dependencies]
-litesvm = "0.10.0"
-solana-message = "3.0.1"
-solana-transaction = "3.0.2"
-solana-signer = "3.0.0"
-solana-keypair = "3.0.1"
+litesvm = "0.7.1"
+solana-message = "2.2"
+solana-transaction = "2.2"
+solana-transaction-error = "2.2"
+solana-signer = "2.2"
+solana-keypair = "2.2"
 
 
 [lints.rust]
